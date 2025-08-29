@@ -132,6 +132,7 @@ struct str4  {
 }str4 ;
 
 // 1+(7)+8+1+(7) = 24
+// 对齐是对最大成员的整数倍对齐,这里是double
 struct str6 {
     char c1;
     double a;
@@ -151,7 +152,7 @@ struct str{
 
 //sizeof = 4
 struct str{
-    int b[0];
+    int b[0]; //空数组,不占空间,但是改变了内存对齐的规则, 因为int类型的数组, 所以改变了内存对齐为4字节
 }
 
 //sizeof = 1
