@@ -1220,7 +1220,7 @@ c++没有强制规定虚函数的实现方式。**编译器中主要用虚表指
 
 c++的多态分为两种：
 
-1. 编译时多态：重载
+1. 编译时多态：重载, 模板
 
 2. 运行时多态：重写即虚函数。虚函数本身其实就是回调函数
 
@@ -1228,7 +1228,7 @@ c++的多态分为两种：
 
 **编译时多态：**
 
-先说一个c中的宏，`__V_ARGS__`，是c99引入进来的可变参宏，一般是用来输出debug信息。可以用这个宏实现一个简单的多态机制。代码举例：
+先说一个c中的宏，`__VA_ARGS__`，是c99引入进来的可变参宏，一般是用来输出debug信息。可以用这个宏实现一个简单的多态机制。代码举例：
 
 ```c
 #define Check(...) printf(__VA_ARGS__);
@@ -1990,6 +1990,56 @@ stack unwinding:Unwinding is the removal of the functions from the stack in the 
   2. 可以指定底层的数据类型，默认是int
   3. 需要通过域运算符来访问枚举成员
 
+## 内存屏障
+
+C++内存屏障是什么? 是一条内存读写操作的顺序边界.
+
+C++内存屏障的作用, 是限制"内存读写重排序", 让多线程之间看到的数据顺序符合预期.它主要和多线程, 原子变量, cpu缓存, 编译器优化有关.
+比如:
+```c++
+int data = 0;
+bool ready = false;
+
+// 线程 A
+data = 42;
+ready = true;
+
+// 线程 B
+while (!ready) {
+}
+std::cout << data << std::endl;
+
+编译器/CPU可能为了性能, 把顺序变成类似:
+ready = true;
+data = 42;
+就有可能打印出0
+```
+
+常见用法: 通过atomic + memory_order_acquire/release实现
+`release` 指的是"发布", 之前的数据都要对之后的可见; `acquire` 指的是"获取"数据, 之后的读写数据不能到前面
+`relaxed` 不保证顺序, 只保存原子变量本身读写是原子的, `seq_cst`表示序列一致性(sequence consistent),默认情况下c++原子操作就是seq_sct
+```c++
+#include <atomic>
+#include <iostream>
+#include <thread>
+
+int data = 0;
+std::atomic<bool> ready(false);
+
+    // 保证producer 中release 之前的写入对consumer中acquire之后的读取可见
+void producer() {
+    data = 42;
+    ready.store(true, std::memory_order_release);
+}
+
+void consumer() {
+    while (!ready.load(std::memory_order_acquire)) {
+    }
+
+    std::cout << data << std::endl;
+}
+```
+
 
 
 ## **内存泄漏？出现内存泄漏如何调试？**
@@ -2126,7 +2176,7 @@ https://aijishu.com/a/1060000000286819
 
 看线程安全问题之前最好还是要看一下源码解析。
 
-shared_ptr 可能的线程安全隐患大概有如下几种，一是引用计数的加减操作是否线程安全，二是shared_ptr修改指向时，是否线程安全。
+shared_ptr 可能的线程安全隐患大概有如下几种，一是`引用计数`的加减操作是否线程安全，二是shared_ptr`修改指向`时，是否线程安全。
 
 1. shared_ptr 的引用计数是原子操作的，所以引用计数的加减是线程安全的。
 
@@ -2141,6 +2191,23 @@ shared_ptr 可能的线程安全隐患大概有如下几种，一是引用计数
            sp = other_sp2;
        }
    }
+   ```
+   ```c++
+   std::shared_ptr<Foo> g;
+
+    // 线程 A
+    g = std::make_shared<Foo>();   // 写
+    // 线程 B
+    auto local = g;                // 读 —— UB!
+
+    正确做法
+
+    C++20 起:
+
+    std::atomic<std::shared_ptr<Foo>> g;
+
+    g.store(std::make_shared<Foo>());
+    auto local = g.load();   // 安全
    ```
 
    当你在多线程回调中修改shared_ptr指向的时候。shared_ptr内数据指针要修改指向，sp原先指向的引用计数的值要减去1，other_sp指向的引用计数值要加1。然而这几步操作加起来并不是一个原子操作，如果多少线程都在修改sp的指向的时候，那么有可能会出问题。比如在导致计数在操作减一的时候，其内部的指向，已经被其他线程修改过了。引用计数的异常会导致某个管理的对象被提前析构，后续在使用到该数据的时候触发core dump。当然如果你没有修改指向的时候，是没有问题的。
