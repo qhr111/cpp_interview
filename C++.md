@@ -769,25 +769,30 @@ move实际上它并不能移动任何东西，它唯一的功能是将一个左�
 **第四行代码：**
 
 ```
-template <typename T>
-void f(T&& val){ 
-	foo(std::forward<T>(val)); 
-}
+  #include <iostream>
 
-//模板类会出现的问题
-template <typename T>
-void forwardValue(T& val)
-{
-    processValue(val); //右值参数会变成左值 
-}
-template <typename T>
-void forwardValue(const T& val)
-{
-    processValue(val); //参数都变成常量左值引用了 
-}
+  void processValue(int& value)
+  {
+      std::cout << "处理左值\n";
+  }
+
+  void processValue(int&& value)
+  {
+      std::cout << "处理右值\n";
+  }
+
+    void forwardValue(int&& val)
+  {
+      processValue(val);
+  }
+  template<typename T>
+  void forwardValue(T&& val)
+  {
+      processValue(std::forward<T>(val));
+  }
 ```
 
-在模板函数中传入的是有个右值，但是第一个函数中变成了左值，第二个函数中变成了常量左值引用。
+在模板函数中传入的是一个右值，但是在forwardValue中函数中变成了左值, 在process函数中变成了左值引用。
 
 **引入完美转发的概念。**
 
@@ -905,7 +910,7 @@ O2优化再打开O1优化的前提下，尝试更多的寄存器级的优化以�
 
 ### this指针是什么时候创建的？
 
-this在成员函数的开始执行前构造，在成员的执行结束后清除。
+this在成员函数的开始执行前由编译器构造并且作为隐藏参数传给函数，在成员的执行结束后清除。
 
 但是如果class里面没有方法的话，它们是没有构造函数的，只能当做C的struct使用。采用TYPE xx的方式定义的话，在栈里分配内存，这时候this指针的值就是这块内存的地址。采用new的方式创建对象的话，在堆里分配内存，new操作符通过eax（累加寄存器）返回分配的地址，然后设置给指针变量。之后去调用构造函数（如果有构造函数的话），这时将这个内存块的地址传给ecx
 
@@ -2798,7 +2803,341 @@ public:
     }
 };
 ```
+## C++ 14, 17, 20, 23新特性
 
+- c++ 14: 泛型lambda, lambda初始化捕获, make_unique
+- c++ 17: 结构化绑定, if constexpr, 折叠表达式, 类模板参数推导, optional, variant, string_view, filesystem和PMR
+- c++ 20: Conecpts, Ranges, Coroutine, span以及semaphore, latch, barrier等并发组件
+- c++ 23: expected, mdspan, print
+
+### 泛型 Lambda
+
+```c++
+  auto add = [](auto a, auto b) {
+      return a + b;
+  };
+
+  add(1, 2);
+  add(1.5, 2.5);
+```
+  Lambda 的参数可以使用 auto，相当于生成模板调用运算符。
+
+  ### Lambda 初始化捕获
+
+  C++11 只能直接捕获已有变量，C++14 可以在捕获列表中创建变量：
+```c++
+  auto ptr = std::make_unique<int>(10);
+    //auto task = [ptr] { 是不允许的
+  auto task = [p = std::move(ptr)] {
+      std::cout << *p;
+  };
+```
+  这使得 unique_ptr 等只能移动的对象能够被 Lambda 捕获。
+  - 为什么不能直接按值捕获 unique_ptr？
+    因为unique_ptr是独占所用权的, 禁止复制, 按值捕获需要复制, 会编译失败
+  - 捕获对象存放在哪里？
+    编译器会为lambda表达式生成一个匿名类, 捕获的对象是该类的成员, 然后该类会实现仿函数operator(),就像一个函数一样
+  - Lambda 对象能否复制？
+    取决于捕获对象是否可以复制, 普通类型可以, unique_ptr不行
+
+### std::make_unique
+```c++
+  auto p = std::make_unique<MyClass>();
+
+  相比：
+
+  std::unique_ptr<MyClass> p(new MyClass);
+```
+  更简洁，也更符合 RAII。
+
+## C++ 17
+### 结构化绑定
+
+  std::pair<int, std::string> result{1, "hello"};
+
+  auto [id, name] = result;
+
+  也常用于 map：
+
+  for (const auto& [key, value] : table) {
+  }
+
+  要注意：
+
+  auto [key, value]        // 复制
+  const auto& [key, value] // 引用，不复制
+
+  ### if constexpr
+
+constexpr是什么: constexpr变量或者函数可以参与编译期计算, (近似等于const, 但要求可以在编译期参与计算)
+```c++
+constexpr int x = 10;  // 正确
+
+  int n;
+  std::cin >> n;
+
+  constexpr int y = n;   // 错误：n 只能在运行时确定
+```
+
+```c++
+  template<typename T>
+  void print(T value) {
+      if constexpr (std::is_integral_v<T>) {
+          std::cout << "integer";
+      } else {
+          std::cout << "other";
+      }
+  }
+```
+  与普通 if 的区别：
+
+  - 普通 if 两个分支都要能通过编译
+  - if constexpr 不满足条件的分支不会被实例化
+
+  ### 折叠表达式
+
+```C++
+  template<typename... Args>
+  auto sum(Args... args) {
+      return (args + ...);
+  }
+```
+  用于简化可变参数模板。
+
+  ### 类模板参数推导 CTAD
+```C++
+  std::pair p(1, 2.0);
+
+  不需要写：
+
+  std::pair<int, double> p(1, 2.0);
+```
+  ### std::optional
+
+  表示“可能存在，也可能不存在”的值：
+```C++
+  std::optional<int> find_value(bool found) {
+      if (found) {
+          return 10;
+      }
+      return std::nullopt;
+  }
+```
+  需要知道：
+
+  - 它通常不需要单独堆分配
+    optional 实现中包含bool是否有值, 还有预分配给值的内存空间
+  - 访问空 optional 的风险
+    需要先检查: if(val.has_value()) 或者直接if(val)
+  - value() 和 operator* 的区别
+    都是取值, 但是*val的做法如果optional为空则会导致未定义行为, value()的话会抛出std::bad_optional_access可以捕获
+  - 为什么比用 -1 表示失败更清楚
+    有些场景-1本来就是合法值, 用户需要知道-1约定的含义
+
+  ### std::variant
+
+  类型安全的联合体：
+```C++
+  std::variant<int, std::string> value;
+
+  value = 10;
+  value = "hello";
+
+  使用：
+
+  std::visit([](const auto& x) {
+      std::cout << x;
+  }, value);
+```
+  - 需要知道错误类型访问会发生什么
+    用std::get<T>(val)去访问, 如果类型不对会抛出`std::bad_variant_access`,可以使用std::get_if来访问(类型不匹配返回nullptr) , 或者是std::visit():
+    ```c++
+    //std::visit 会根据 variant 当前保存的类型，调用对应版本的 Lambda。
+        std::visit([](const auto& data) {
+        std::cout << data;
+    }, value);
+    ```
+  - 它与继承、多态的区别。
+    集成式开放型集合, 可以一直加派生类, 联合体是闭合型稳定场景
+
+  ### std::string_view
+
+string_view不是字符串, 只是保存了字符串在哪里, 多长的信息
+```C++
+  class string_view {
+      const char* data;  // 字符串起始地址
+      size_t size;       // 字符串长度
+  };
+```
+  非 owning 的字符串视图：
+```C++
+  void print(std::string_view text);
+
+  优点是不复制字符串，但最重要的陷阱是悬空：
+
+  std::string_view bad() {
+      std::string s = "hello";
+      return s;  // 错误：s 销毁后 string_view 悬空
+  }
+```
+ ### 其中 PMR 对高性能系统值得重点了解：
+
+ PMR是C++17 引入的, 可以让容器使用哪种内存分配策略, 可以在运行时决定, 不需要改变容器的业务代码
+
+```C++
+  std::pmr::vector<int>
+
+  std::vector<
+      int,
+      std::pmr::polymorphic_allocator<int>
+  >
+```
+
+  它允许控制容器从哪个内存资源分配内存，但需要理解 allocator/resource 的生命周期。
+
+## C++20：掌握核心思想和常用组件
+
+  ### Concepts
+
+  用于约束模板参数：加入"准入条件", 只有满足条件的类型才能使用这个模板
+  解决了传统模板"不知道参数需要满足什么条件"和"报错信息特别长"的问题.
+```C++
+  #include <concepts>
+
+  template<typename T>
+  //限制整数integral
+  requires std::integral<T>
+  T add(T a, T b) {
+      return a + b;
+  }
+```
+  或者：
+```C++
+  template<std::integral T>
+  T add(T a, T b) {
+      return a + b;
+  }
+```
+  需要能解释它相比 SFINAE 的优势：
+
+  - 错误信息更清楚
+  - 约束直接表达在接口中
+  - 编译器更容易进行重载选择
+
+  ### std::span
+
+  表示一段连续内存，但不拥有内存：只记录数据从哪里开始, 一共有多少个元素
+  std::span 把指针和长度包装在一起, 避免要传(指针 + 长度)两个参数
+```C++
+  void process(std::span<const float> data);
+
+  可以接收数组和 vector：
+
+  float array[10];
+  std::vector<float> values(10);
+
+  process(array);
+  process(values);
+```
+  对算子开发特别实用，但与 string_view 一样存在生命周期问题：底层内存销毁后，span 就悬空了。
+
+  ### Ranges
+```C++
+  auto result =
+      values
+      | std::views::filter([](int x) { return x > 0; })
+      | std::views::transform([](int x) { return x * 2; });
+```
+  需要理解：
+
+  - view 通常是惰性计算
+  - view 通常不拥有数据
+  - 可能发生 dangling
+  - 可读性更好不等于一定更快
+
+  ### Coroutine
+
+普通函数只能: 进入函数->一直执行->返回->函数结束
+coruntine协程可以: 进入协程->执行一部分->暂停suspend->控制权交还调用者->以后恢复resume->从上次暂停位置继续执行
+
+为了暂停后可以恢复, 会保存协程内变量和执行位置, 编译器会为协程创建coruntine frame
+
+编译器可以把协程近似转换为状态机:
+```C++
+  switch (current_state) {
+  case 0:
+      // 从函数开始执行
+      break;
+
+  case 1:
+      // 从第一个暂停点后继续
+      break;
+
+  case 2:
+      // 从第二个暂停点后继续
+      break;
+  }
+```
+  需要知道基本概念：
+
+  - co_await: 用于等待某个条件触发
+  - co_yield: 用于产生一个值, 然后暂停协程
+  - co_return: 结束协程,返回最终结果
+  - coroutine frame
+  - suspend/resume
+  - promise type
+
+### 并发相关
+
+  比较值得量化开发准备：
+
+  std::jthread
+  std::stop_token
+  std::atomic_ref
+  std::atomic::wait
+  std::atomic::notify_one
+  std::counting_semaphore
+  std::latch
+  std::barrier
+
+  例如 jthread 会自动 join：
+
+  std::jthread worker([] {
+      // ...
+  });
+
+## C++23：了解重点特性
+
+  ### std::expected
+
+  表达“返回结果或者错误”：
+```C++
+  std::expected<int, Error> parse();
+
+  使用思路：
+
+  auto result = parse();
+
+  if (result) {
+      std::cout << *result;
+  } else {
+      handle_error(result.error());
+  }
+```
+  相比异常，它让错误成为返回类型的一部分；相比错误码，它不容易被忽略。
+
+  ### std::mdspan
+```C++
+  多维非 owning 视图：
+
+  std::mdspan<float, std::extents<size_t, 16, 16>> matrix(data);
+
+  对矩阵、张量、CUDA/HPC 很相关。需要知道：
+
+  - mdspan 不拥有数据
+  - 描述多维索引、形状和 layout
+  - 可以表达 row-major、column-major 或自定义映射
+```
 **注意千万不要吧一个原生指针给多个共享指针管理，会造成错误，具体看我的注释。**
 
 
